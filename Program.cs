@@ -15,6 +15,8 @@ using ParkingManagementSystem.Models;
 using ParkingManagementSystem.Options;
 using ParkingManagementSystem.Services;
 using ParkingManagementSystem.Services.Authz;
+using System.Text.Json;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -27,12 +29,13 @@ builder.Services.AddOptions<JwtOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+// ✅ FIX: Use ENV VARIABLE for Render PostgreSQL
+var connectionString = Environment.GetEnvironmentVariable("DB_CONNECTION")
+    ?? throw new InvalidOperationException("DB_CONNECTION not found");
 
-// ✅ SWITCHED TO SQLITE
+// ✅ FIX: PostgreSQL (RENDER)
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlite(connectionString));
+    options.UseNpgsql(connectionString));
 
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
 {
@@ -69,8 +72,10 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
     .Configure<IOptions<JwtOptions>>((jwtBearerOptions, jwtAccessor) =>
     {
         var jwt = jwtAccessor.Value;
+
         jwtBearerOptions.SaveToken = true;
         jwtBearerOptions.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+
         jwtBearerOptions.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuerSigningKey = true,
@@ -82,11 +87,13 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromSeconds(30)
         };
+
         jwtBearerOptions.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
             {
                 var path = context.HttpContext.Request.Path;
+
                 if (path.StartsWithSegments("/hubs"))
                 {
                     var accessToken = context.Request.Query["access_token"].ToString();
@@ -111,6 +118,7 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
     options.AddFixedWindowLimiter("auth", opt =>
     {
         opt.PermitLimit = 20;
@@ -123,11 +131,11 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
     });
 
-// ✅ FIXED CORS FOR DEPLOYMENT
+// ✅ CORS FOR FRONTEND
 builder.Services.AddCors(policyOptions =>
 {
     policyOptions.AddPolicy("AllowFrontend",
@@ -141,13 +149,17 @@ builder.Services.AddCors(policyOptions =>
 
 var app = builder.Build();
 
+// ===================== DB + SEED =====================
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
     var db = services.GetRequiredService<ApplicationDbContext>();
-    await db.Database.MigrateAsync();
+
+    // ✅ Safe migration for Render
+    db.Database.Migrate();
 
     var cfg = services.GetRequiredService<IConfiguration>();
+
     var adminEmail = cfg["SeedData:AdminEmail"] ?? "admin@parking.local";
     var adminPassword = cfg["SeedData:AdminPassword"] ?? "Admin@123";
     var managerEmail = cfg["SeedData:ManagerEmail"] ?? "manager@parking.local";
@@ -163,6 +175,7 @@ using (var scope = app.Services.CreateScope())
     await ParkingLotBootstrap.EnsureAsync(db);
 }
 
+// ===================== MIDDLEWARE =====================
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler(handler =>
@@ -171,9 +184,14 @@ if (!app.Environment.IsDevelopment())
         {
             context.Response.StatusCode = StatusCodes.Status500InternalServerError;
             context.Response.ContentType = "application/json";
-            await context.Response.WriteAsJsonAsync(new { error = "An unexpected error occurred." });
+
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = "An unexpected error occurred."
+            });
         });
     });
+
     app.UseHsts();
     app.UseHttpsRedirection();
 }
@@ -183,6 +201,7 @@ app.Use(async (context, next) =>
     context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
     context.Response.Headers.Append("X-Frame-Options", "DENY");
     context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
+
     await next();
 });
 
@@ -198,6 +217,7 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapHub<ParkingEventsHub>("/hubs/parking");
 
+// Health check
 app.MapGet("/", () => Results.Json(new
 {
     name = "ParkingManagementSystem",
