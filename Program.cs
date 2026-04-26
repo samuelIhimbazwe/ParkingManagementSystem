@@ -18,6 +18,10 @@ using ParkingManagementSystem.Services.Authz;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ✅ PORT FIX FOR RENDER
+var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
+builder.WebHost.UseUrls($"http://*:{port}");
+
 builder.Services.AddOptions<JwtOptions>()
     .BindConfiguration(JwtOptions.SectionName)
     .ValidateDataAnnotations()
@@ -25,8 +29,10 @@ builder.Services.AddOptions<JwtOptions>()
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+
+// ✅ SWITCHED TO SQLITE
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(connectionString));
+    options.UseSqlite(connectionString));
 
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
 {
@@ -118,25 +124,18 @@ builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
-        // EF includes (e.g. ParkingSession → ParkingSpace → Sessions) would otherwise throw on serialize.
         options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
     });
 
+// ✅ FIXED CORS FOR DEPLOYMENT
 builder.Services.AddCors(policyOptions =>
 {
     policyOptions.AddPolicy("AllowFrontend",
         policy =>
         {
-            policy.WithOrigins(
-                    "http://localhost:5173",
-                    "http://localhost:5174",
-                    "http://127.0.0.1:5173",
-                    "http://127.0.0.1:5174",
-                    "https://localhost:5173",
-                    "https://localhost:5174")
-                .AllowAnyHeader()
-                .AllowAnyMethod()
-                .AllowCredentials();
+            policy.AllowAnyOrigin()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
         });
 });
 
@@ -147,17 +146,20 @@ using (var scope = app.Services.CreateScope())
     var services = scope.ServiceProvider;
     var db = services.GetRequiredService<ApplicationDbContext>();
     await db.Database.MigrateAsync();
+
     var cfg = services.GetRequiredService<IConfiguration>();
     var adminEmail = cfg["SeedData:AdminEmail"] ?? "admin@parking.local";
     var adminPassword = cfg["SeedData:AdminPassword"] ?? "Admin@123";
     var managerEmail = cfg["SeedData:ManagerEmail"] ?? "manager@parking.local";
     var managerPassword = cfg["SeedData:ManagerPassword"] ?? "Manager@123";
+
     await SeedData.InitializeAsync(
         services,
         adminEmail: adminEmail,
         adminPassword: adminPassword,
         managerEmail: managerEmail,
         managerPassword: managerPassword);
+
     await ParkingLotBootstrap.EnsureAsync(db);
 }
 
@@ -196,7 +198,11 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapHub<ParkingEventsHub>("/hubs/parking");
 
-// Helps Visual Studio / browser launch URL (no MVC page at "/")
-app.MapGet("/", () => Results.Json(new { name = "ParkingManagementSystem", status = "running", docs = "Use /api/* endpoints (e.g. /api/ParkingSpaces)." }));
+app.MapGet("/", () => Results.Json(new
+{
+    name = "ParkingManagementSystem",
+    status = "running",
+    docs = "Use /api/* endpoints"
+}));
 
 app.Run();
