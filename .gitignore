@@ -1,0 +1,18 @@
+## Build / IDE
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+
+## Dependencies
+**/node_modules/
+
+## Logs / local
+*.log
+.env
+.env.local
+
+## OS
+Thumbs.db
+Desktop.ini

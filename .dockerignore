@@ -1,0 +1,13 @@
+.git
+.github
+.vs
+**/[Bb]in/
+**/[Oo]bj/
+**/node_modules/
+frontend/
+client/
+.build_verify*
+*.md
+!README.md
+.env
+.env.*
